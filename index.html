@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Timer: Final Edition</title>
+    <style>
+        /* :root は「変数」を定義する場所。後で色を変えたくなった時、ここだけ直せば全部変わる */
+        :root {
+            --bg-color: #1a1a1a;       /* 背景色：ダークグレー */
+            --panel-bg: #252525;       /* 設定パネルの背景色 */
+            --text-color: #f0f0f0;     /* 文字色：白に近いグレー */
+            --primary-color: #00ff88;  /* Workモードの色：ネオン緑 */
+            --break-color: #00ccff;    /* Breakモードの色：ネオン水色 */
+            --alert-color: #ff3333;    /* 終了時の色：赤 */
+            --circle-bg: #333;         /* 円グラフの裏地の色 */
+            --font-mono: 'Courier New', Courier, monospace; /* 数字の位置がズレない等幅フォント */
+        }
+
+        /* すべての要素の余白をリセットし、サイズ計算を簡単にする（お約束） */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: sans-serif;
+            /* Flexboxを使って、画面のド真ん中に要素を配置する */
+            display: flex;
+            justify-content: center; /* 左右の中央 */
+            align-items: center;     /* 上下の中央 */
+            min-height: 100vh;       /* 画面の高さいっぱいに広げる */
+            transition: background-color 0.5s ease; /* 背景色が変わるときにフワッとさせる */
+        }
+
+        /* HTMLの data-mode="work" という属性を見て、テーマカラー変数を切り替える */
+        body[data-mode="work"] { --theme-color: var(--primary-color); }
+        body[data-mode="break"] { --theme-color: var(--break-color); }
+        /* 時間切れの時は背景を赤っぽくする */
+        body.time-up { background-color: #330000; --theme-color: var(--alert-color); }
+
+        .container {
+            width: 100%;
+            max-width: 500px; /* スマホでは幅いっぱい、PCでは500pxまで */
+            padding: 20px;
+            text-align: center;
+        }
+
+        /* 「Work Mode」などの状態を表示するバッジ */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 16px;
+            border-radius: 20px;
+            background: #333;
+            color: var(--theme-color); /* 現在のモードの色を使う */
+            font-weight: bold;
+            margin-bottom: 1.5rem;
+        }
+
+        /* タイマーの円グラフと数字を囲む枠 */
+        .timer-wrapper {
+            position: relative; /* 中身を absolute で配置するための基準点 */
+            width: 280px;
+            height: 280px;
+            margin: 0 auto 2rem; /* 中央寄せ */
+        }
+
+        /* SVG（円グラフ）の設定 */
+        .progress-ring {
+            transform: rotate(-90deg); /* 12時の位置からスタートさせるために回転 */
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 円の背景（グレーの薄い線） */
+        .progress-ring__circle-bg {
+            fill: transparent; /* 塗りつぶしなし */
+            stroke: var(--circle-bg); /* 線の色 */
+            stroke-width: 8;   /* 線の太さ */
+        }
+
+        /* 実際に動く色のついた円 */
+        .progress-ring__circle {
+            fill: transparent;
+            stroke: var(--theme-color);
+            stroke-width: 8;
+            stroke-linecap: round; /* 線の端っこを丸くする */
+            /* 円周の長さ（JSで計算してセットするが、CSSでも初期値を指定） */
+            stroke-dasharray: 880; 
+            stroke-dashoffset: 0;  /* 線の開始位置をずらすことで、グラフが減ったように見せる */
+            transition: stroke-dashoffset 0.1s linear, stroke 0.3s; /* アニメーション設定 */
+        }
+
+        /* 真ん中の時間表示 */
+        .timer-display {
+            position: absolute; /* 親要素の真ん中に強制配置 */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%); /* 完全に中心に合わせる微調整 */
+            font-family: var(--font-mono);
+            font-size: 3.5rem;
+            font-weight: bold;
+            color: var(--theme-color);
+        }
+
+        /* 設定パネルのデザイン */
+        .config-panel {
+            background: var(--panel-bg);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        /* 設定の1行ぶん（ラベルと入力欄） */
+        .config-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between; /* ラベルと入力欄を左右に離す */
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #333;
+        }
+        /* 最後の行だけ下線と余白を消す */
+        .config-row:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+
+        .config-label {
+            font-size: 0.85rem;
+            font-weight: bold;
+            color: #888;
+            width: 60px;
+            text-align: left;
+        }
+
+        /* 時間の入力欄とセレクトボックスをまとめるラッパー */
+        .config-inputs {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            justify-content: flex-end; /* 右寄せ */
+        }
+
+        /* プリセット選択プルダウン */
+        .select-preset {
+            background: #333;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* 分：秒 の入力エリア */
+        .time-input-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #111;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+        
+        .time-input {
+            background: transparent;
+            border: none;
+            color: #fff;
+            width: 36px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 1rem;
+        }
+        /* 入力欄を選択したとき（フォーカス時）の枠線を消す */
+        .time-input:focus { outline: none; color: var(--theme-color); }
+
+        /* 現在選択中のモードの設定行をハイライト（色付け）する */
+        .config-row.active .config-label { color: var(--theme-color); }
+        .config-row.active .time-input-group { border-color: var(--theme-color); }
+
+        /* ボタンエリア */
+        .controls { display: flex; justify-content: center; gap: 15px; margin-top: 10px; }
+
+        .btn {
+            border: none;
+            padding: 14px 32px;
+            font-size: 1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        /* ボタンを押したときのへこむ動き */
+        .btn:active { transform: translateY(2px); }
+        /* 無効化（disabled）されたボタンの見た目 */
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+        
+        .btn-start { background-color: var(--theme-color); color: #000; }
+        .btn-stop { background-color: #ff9900; color: #000; }
+        .btn-reset { background-color: #555; color: #fff; }
+
+    </style>
+</head>
+<body data-mode="work">
+
+<div class="container">
+    <div class="status-badge" id="status-text">Work Mode</div>
+
+    <div class="timer-wrapper">
+        <svg class="progress-ring">
+            <circle class="progress-ring__circle-bg" r="136" cx="140" cy="140"/>
+            <circle class="progress-ring__circle" r="136" cx="140" cy="140"/>
+        </svg>
+        <div class="timer-display" id="display">00:00</div>
+    </div>
+
+    <div class="config-panel">
+        
+        <div class="config-row active" id="row-work">
+            <span class="config-label">Work</span>
+            <div class="config-inputs">
+                <select id="work-preset" class="select-preset">
+                    <option value="3">3 min</option>
+                    <option value="5">5 min</option>
+                    <option value="10">10 min</option>
+                    <option value="25" selected>25 min</option> <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                    <option value="manual">手動</option>
+                </select>
+                <div class="time-input-group">
+                    <input type="number" id="work-min" class="time-input" value="25" min="0" max="99">
+                    <span>:</span>
+                    <input type="number" id="work-sec" class="time-input" value="00" min="0" max="59">
+                </div>
+            </div>
+        </div>
+
+        <div class="config-row" id="row-break">
+            <span class="config-label">Break</span>
+            <div class="config-inputs">
+                <select id="break-preset" class="select-preset">
+                    <option value="3">3 min</option>
+                    <option value="5" selected>5 min</option>
+                    <option value="10">10 min</option>
+                    <option value="25">25 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                    <option value="manual">手動</option>
+                </select>
+                <div class="time-input-group">
+                    <input type="number" id="break-min" class="time-input" value="5" min="0" max="99">
+                    <span>:</span>
+                    <input type="number" id="break-sec" class="time-input" value="00" min="0" max="59">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button id="btn-start" class="btn btn-start">Start</button>
+        <button id="btn-stop" class="btn btn-stop" disabled>Stop</button>
+        <button id="btn-reset" class="btn btn-reset">Reset</button>
+    </div>
+</div>
+
+<script>
+/**
+ * クラス: ConfigManager
+ * 役割: 「Work」と「Break」、それぞれの設定（プリセット選択と手入力）の動きを管理する担当者
+ */
+class ConfigManager {
+    // new ConfigManager() されたときに最初に動く処理
+    constructor(type, onChangeCallback) {
+        this.type = type; // 'work' か 'break' かを受け取る
+        this.onChange = onChangeCallback; // 値が変わったときに呼び出す関数（親クラスへの通知用）
+
+        // HTMLの要素（部品）を探して変数に入れておく（キャッシュ）
+        this.dom = {
+            select: document.getElementById(`${type}-preset`), // セレクトボックス
+            min: document.getElementById(`${type}-min`),       // 分の入力欄
+            sec: document.getElementById(`${type}-sec`),       // 秒の入力欄
+            row: document.getElementById(`row-${type}`)        // 行全体（スタイル変更用）
+        };
+
+        // イベント監視を開始
+        this.bindEvents();
+    }
+
+    // ボタン操作や入力を監視する設定
+    bindEvents() {
+        // 1. セレクトボックス（プリセット）が変更されたら
+        this.dom.select.addEventListener('change', () => {
+            const val = this.dom.select.value;
+            // 「手動」以外なら、その数字を入力欄に自動でセットする
+            if (val !== 'manual') {
+                this.dom.min.value = val;
+                this.dom.sec.value = '00';
+            }
+            // 親（TimerApp）に変更を通知する
+            this.notifyChange();
+        });
+
+        // 2. 入力欄に数字が入力されたら
+        // 'input' はキーを打つたび、'change' は確定したときに発火
+        ['input', 'change'].forEach(ev => {
+            this.dom.min.addEventListener(ev, () => this.handleManualInput());
+            this.dom.sec.addEventListener(ev, () => this.handleManualInput());
+        });
+    }
+
+    // 手動入力されたときの処理
+    handleManualInput() {
+        // セレクトボックスを勝手に「手動」に切り替える（UX向上）
+        this.dom.select.value = 'manual';
+        this.notifyChange();
+    }
+
+    // 値変更を親クラスへ通知する処理
+    notifyChange() {
+        // 入力された文字を数字に変換（parseInt）
+        let m = parseInt(this.dom.min.value, 10);
+        let s = parseInt(this.dom.sec.value, 10);
+        
+        // もし数字じゃなかったりマイナスだったりしたら 0 にする（安全対策）
+        if (isNaN(m) || m < 0) m = 0;
+        if (isNaN(s) || s < 0) s = 0;
+        
+        // 全体をミリ秒（1000分の1秒）に変換して通知
+        const totalMs = (m * 60 + s) * 1000;
+        this.onChange(this.type, totalMs);
+    }
+
+    // 現在の設定時間をミリ秒で取得する便利関数
+    getTimeMs() {
+        const m = parseInt(this.dom.min.value, 10) || 0;
+        const s = parseInt(this.dom.sec.value, 10) || 0;
+        return (m * 60 + s) * 1000;
+    }
+
+    // 設定エリアを操作できないようにする（タイマー動作中など）
+    setDisabled(isDisabled) {
+        this.dom.select.disabled = isDisabled;
+        this.dom.min.disabled = isDisabled;
+        this.dom.sec.disabled = isDisabled;
+        
+        // 半透明にして「触れませんよ」感を出す
+        this.dom.row.style.opacity = isDisabled ? '0.5' : '1';
+    }
+
+    // 「今この設定を使っていますよ」という見た目（ハイライト）にする
+    setActive(isActive) {
+        if (isActive) {
+            this.dom.row.classList.add('active'); // CSSで色がつく
+        } else {
+            this.dom.row.classList.remove('active');
+        }
+    }
+}
+
+/**
+ * クラス: SoundManager
+ * 役割: 音を鳴らす担当者。mp3ファイルなどを使わず、プログラムで音波を作る。
+ */
+class SoundManager {
+    constructor() { this.ctx = null; }
+
+    // 音を鳴らす準備（ブラウザのルール上、クリック等の操作がないと開始できない）
+    init() { 
+        if (!this.ctx) {
+            // ブラウザごとの違いを吸収して AudioContext（音響システム）を作成
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    // ピピピ！という音を鳴らす
+    playAlarm() {
+        if (!this.ctx) this.init();
+        
+        // 一時停止状態なら再開させる
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+
+        // オシレーター（発振器：音の波を作る機械）を用意
+        const osc = this.ctx.createOscillator();
+        // ゲイン（音量調節つまみ）を用意
+        const gain = this.ctx.createGain();
+
+        osc.type = 'square'; // 「矩形波」という、ファミコンっぽい音色に設定
+
+        // 今の時間
+        const now = this.ctx.currentTime;
+
+        // 音の高さ（周波数）を時間経過で変化させる（ピ・ピ・ピ・ピ）
+        osc.frequency.setValueAtTime(880, now);        // ラ (880Hz)
+        osc.frequency.setValueAtTime(1760, now + 0.1); // 高いラ (1760Hz)
+        
+        // 音量を時間経過で下げる（フェードアウト）
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+        // 配線をつなぐ：発振器 -> 音量 -> スピーカー
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        // 音を出す！
+        osc.start();
+        // 0.5秒後に止める
+        osc.stop(now + 0.5);
+    }
+}
+
+/**
+ * クラス: TimerApp
+ * 役割: アプリ全体の司令塔。タイマーの計算、画面更新、Work/Breakの切り替えを行う。
+ */
+class TimerApp {
+    constructor() {
+        // 画面のパーツを取得
+        this.dom = {
+            display: document.getElementById('display'), // 数字表示部
+            circle: document.querySelector('.progress-ring__circle'), // 円グラフ
+            btns: {
+                start: document.getElementById('btn-start'),
+                stop: document.getElementById('btn-stop'),
+                reset: document.getElementById('btn-reset')
+            },
+            body: document.body,
+            status: document.getElementById('status-text')
+        };
+
+        this.soundManager = new SoundManager();
+
+        // 円周の長さを計算（半径 * 2 * 円周率）
+        // これを基準に、どれくらい線を引くかを決める
+        this.circumference = this.dom.circle.r.baseVal.value * 2 * Math.PI;
+        this.dom.circle.style.strokeDasharray = `${this.circumference} ${this.circumference}`;
+
+        // ConfigManagerを使って、WorkとBreakの設定機能を準備
+        this.configs = {
+            work: new ConfigManager('work', (type, ms) => this.onConfigChange(type, ms)),
+            break: new ConfigManager('break', (type, ms) => this.onConfigChange(type, ms))
+        };
+
+        // アプリの状態（変数）
+        this.state = {
+            mode: 'WORK', // 今は 'WORK' か 'BREAK' か
+            isRunning: false, // 動いているか？
+            endTime: 0,       // 終了予定時刻
+            remaining: 0,     // 残り時間（ミリ秒）
+            total: 0          // 最初にセットした合計時間（グラフ計算用）
+        };
+
+        // 初期化処理スタート
+        this.init();
+    }
+
+    init() {
+        // ボタンにクリックイベントを登録
+        this.dom.btns.start.addEventListener('click', () => {
+            this.soundManager.init(); // 音の準備
+            this.start(); // スタート
+        });
+        this.dom.btns.stop.addEventListener('click', () => this.stop());
+        this.dom.btns.reset.addEventListener('click', () => this.reset());
+
+        // ページを開いた瞬間、Workの時間を読み込んで表示する
+        const initialWorkMs = this.configs.work.getTimeMs();
+        this.setTimerData(initialWorkMs);
+    }
+
+    // 設定時間が変更されたときに呼ばれる処理
+    onConfigChange(type, ms) {
+        if (this.state.isRunning) return; // 動いているときは無視
+
+        // 「Work設定を変えた」かつ「今Workモード」なら画面を更新
+        if (type.toUpperCase() === this.state.mode) {
+            this.setTimerData(ms);
+        }
+    }
+
+    // 内部データと画面表示を更新する共通処理
+    setTimerData(ms) {
+        this.state.total = ms;
+        this.state.remaining = ms;
+        this.updateDisplay(ms); // 数字更新
+        this.setProgress(0);    // グラフを満タンにする
+    }
+
+    // モード切り替え処理（Work <-> Break）
+    switchMode(newMode) {
+        this.state.mode = newMode;
+        // bodyに属性をつけて、CSSの色を一括変更
+        this.dom.body.setAttribute('data-mode', newMode.toLowerCase());
+        this.dom.status.textContent = newMode === 'WORK' ? 'Work Mode' : 'Break Time';
+
+        // 設定エリアのハイライト切り替え
+        this.configs.work.setActive(newMode === 'WORK');
+        this.configs.break.setActive(newMode === 'BREAK');
+
+        // 切り替えた先の時間をセット
+        const ms = this.configs[newMode.toLowerCase()].getTimeMs();
+        this.setTimerData(ms);
+    }
+
+    // タイマースタート
+    start() {
+        if (this.state.isRunning) return; // 二重起動防止
+        if (this.state.remaining <= 0) return; // 0秒なら何もしない
+
+        this.state.isRunning = true;
+        // 【重要】現在時刻 + 残り時間 = 終了予定時刻
+        // これを基準にすることで、処理落ちしても時間がズレない（Drift Correction）
+        this.state.endTime = Date.now() + this.state.remaining;
+        
+        this.updateUIState();
+        this.dom.body.classList.remove('time-up'); // 赤い背景を消す
+
+        this.tick(); // 初回の画面更新
+        // 0.1秒ごとに画面を更新するループを開始
+        this.intervalId = setInterval(() => this.tick(), 100);
+    }
+
+    // 一時停止
+    stop() {
+        if (!this.state.isRunning) return;
+        clearInterval(this.intervalId); // ループを止める
+        this.state.isRunning = false;
+        
+        // 次回再開するときのために、正確な残時間を計算して保存しておく
+        const diff = this.state.endTime - Date.now();
+        this.state.remaining = Math.max(0, diff);
+        
+        this.updateUIState();
+    }
+
+    // リセット
+    reset() {
+        this.stop();
+        this.dom.body.classList.remove('time-up');
+        
+        // 今のモードの設定入力値に戻す
+        const currentConfig = this.configs[this.state.mode.toLowerCase()];
+        const ms = currentConfig.getTimeMs();
+        this.setTimerData(ms);
+    }
+
+    // 時間切れの処理（無限ループの要）
+    finish() {
+        this.stop();
+        this.state.remaining = 0;
+        this.updateDisplay(0);
+        this.setProgress(0);
+        this.soundManager.playAlarm(); // 音を鳴らす
+
+        if (this.state.mode === 'WORK') {
+            // Workが終わったら... Breakへ
+            this.dom.body.classList.add('time-up'); // 背景を赤く
+            setTimeout(() => {
+                // アラートでユーザーに通知（ここでOKを押すまで待機される）
+                // 待機することで、トイレに行っている間に休憩時間が減るのを防ぐ
+                alert('お疲れ様！休憩に入ります。');
+                
+                this.switchMode('BREAK'); // 休憩モードへ
+                this.start(); // 自動で休憩スタート！
+            }, 500);
+
+        } else {
+            // Breakが終わったら... Workへ
+            alert('休憩終了！仕事に戻りましょう。');
+            
+            this.switchMode('WORK'); // 仕事モードへ
+            this.start(); // 自動で仕事スタート！（地獄の無限ループ）
+        }
+    }
+
+    // 定期実行される更新処理 (tick)
+    tick() {
+        // 終了予定時刻 - 現在時刻 = 残り時間
+        const diff = this.state.endTime - Date.now();
+        
+        // 0以下になったら終了
+        if (diff <= 0) {
+            this.finish();
+            return;
+        }
+
+        this.state.remaining = diff;
+        this.updateDisplay(diff);
+        // 進捗率（0.0〜1.0）を計算してグラフを更新
+        this.setProgress(diff / this.state.total);
+    }
+
+    // 画面の数字（00:00）を更新する
+    updateDisplay(ms) {
+        // ミリ秒を秒に直して切り上げ
+        const totalSec = Math.ceil(ms / 1000);
+        const m = Math.floor(totalSec / 60); // 分
+        const s = totalSec % 60;             // 秒
+        
+        // 2桁に揃える (例: 5 -> 05)
+        const text = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        
+        this.dom.display.textContent = text;
+        // ブラウザのタブ名にも時間を表示
+        document.title = `(${this.state.mode}) ${text}`;
+    }
+
+    // 円グラフの線を操作する
+    setProgress(ratio) { 
+        // ratio: 1.0 = 満タン, 0.0 = 空っぽ
+        const offset = this.circumference - (ratio * this.circumference);
+        this.dom.circle.style.strokeDashoffset = offset;
+    }
+
+    // ボタンや入力欄の 有効/無効 を切り替える
+    updateUIState() {
+        const running = this.state.isRunning;
+        this.dom.btns.start.disabled = running;  // 動いている時はスタート押せない
+        this.dom.btns.stop.disabled = !running;  // 止まっている時はストップ押せない
+        
+        // 動いている時は設定を変更できないようにロックする
+        this.configs.work.setDisabled(running);
+        this.configs.break.setDisabled(running);
+    }
+}
+
+// ページの読み込みが完了したら、アプリを起動する
+document.addEventListener('DOMContentLoaded', () => {
+    new TimerApp();
+});
+</script>
+</body>
+</html>
